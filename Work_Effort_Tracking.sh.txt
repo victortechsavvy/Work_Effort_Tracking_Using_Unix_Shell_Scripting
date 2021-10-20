@@ -1,0 +1,105 @@
+#!/bin/ksh
+
+today=`date "+%D"`
+rtime=`date "+%T %Z"`
+
+##USER CONFIGURATION
+APP_NAME="DEMO-APP" ## Enter the name of the applicaton
+TEAM="Development" ## Enter the name of the Team eg. Development/Testing/Infra/Support
+BASE_DIR=`echo $HOME`
+FILE_PATH="$BASE_DIR/track/reports" ## path where you want to store the report CSV file
+APP_LIST="|APP1|APP2|APP3|" ## List of all the sub-modules under the main application
+RT_LIST="|TICKET|EMAIL|CHAT|ADHOC|" ## List of different type of request
+SEV_LIST="|HIGH|MEDIUM|LOW|" ## List of severities
+USER_LIST="$BASE_DIR/track/users.db" ## Configure the list of all the users who would be using this
+DEFAULT_APP="APP1" ## this will be selected as default Module, if nothing is entered as parameter
+DEFAULT_RT="TICKET" ## this will be selected as default Request Type, if nothing is entered as parameter
+DEFAULT_SEV="MEDIUM" ## this will be selected as default Severity, if nothing is entered as parameter
+ENV="PROD"
+
+## VARIABLE DECLARATION
+MONTHLY_TRACKER="Monthly_Activity_Tracker_"$APP_NAME"_`date +%m_%Y`.csv"
+TMP_FILE="Monthly_Activity_Tracker_"$APP_NAME"_tmp.csv"
+
+
+if [ ! -f $FILE_PATH/$MONTHLY_TRACKER ]
+then
+        echo "create file"
+        echo "UID,NAME,TEAM,APPLICATION,MODULE,REQUEST_TYPE,DATE,TIME,DESCRIPTION/TICKET#,COUNT,SEVERITY,ENVIRONMENT" > $FILE_PATH/$MONTHLY_TRACKER
+fi
+
+arg="$#"
+i="1"
+DESC=""
+TECHNAME_FLAG=0
+while [[ "$i" -le "$arg" ]]
+do
+        eval temp="\${$i}"
+        temp=`echo $temp | tr [a-z] [A-Z]`
+        chk=`echo $APP_LIST | grep "|$temp|" | wc -l`
+        if [[ $chk -gt 0  ]]
+        then
+                APP=$temp
+        else
+                chk=`echo $RT_LIST | grep "|$temp|" | wc -l`
+                if [[ $chk -gt 0 ]]
+                then
+                        RT=$temp
+                else
+                        chk=`echo $SEV_LIST | grep "|$temp|" | wc -l`
+                        if [[ $chk -gt 0 ]]
+                        then
+                                SEV=$temp
+                        else
+                                chk=`cat $USER_LIST | grep -i "$temp" | wc -l`
+                                if [[ $chk -gt 0 && $TECHNAME_FLAG -eq 0 ]]
+                                then
+                                        TECHID=$temp
+                                        TECHNAME=`cat $USER_LIST | grep -i "^$temp" | cut -d':' -f2`
+                                        ATTID=`cat $USER_LIST | grep -i "^$temp" | cut -d':' -f1`
+                                        TECHNAME_FLAG=1
+                                else
+                                        chk=`echo $temp | grep -i 'count:'| wc -l`
+                                        if [[ $chk -gt 0 ]]
+                                        then
+                                                COUNT=`echo $temp | cut -d':' -f2`
+                                        else
+                                                DESC="$DESC $temp"
+                                                DESC=`sed 's/,/ /g' <<< $DESC`
+                                                DESC=`sed 's/*/ /g' <<< $DESC`
+                                        fi
+                                fi
+                        fi
+                fi
+        fi
+        i=`expr $i + 1`
+done
+if [[ "$APP" == "" ]]
+then
+        APP=$DEFAULT_APP
+fi
+if [[ "$RT" == "" ]]
+then
+        RT=$DEFAULT_RT
+fi
+if [[ "$SEV" == "" ]]
+then
+        SEV=$DEFAULT_SEV
+fi
+if [[ "$COUNT" == "" ]]
+then
+        COUNT="1"
+fi
+echo "Adding activity into Tracker ..."
+echo "$AREA|$TECHNAME|$today|$rtime|$APP|$RT|$SEV|"$DESC"|$COUNT"
+echo "$ATTID,$TECHNAME,$TEAM,$APP_NAME,$APP,$RT,$today,$rtime,"$DESC",$COUNT,$SEV,$ENV" >> $FILE_PATH/$MONTHLY_TRACKER
+
+## You can insert the same in an DB Table
+sqlplus -s SQL_USER/SQL_PASS@ORACLE_SID << EOF
+        INSERT into WORK_ACTIVITY_TRACKER
+        values
+        ('$ATTID','$TECHNAME','$TEAM','$APP_NAME','$APP','$RT','$today','$rtime','$DESC','$COUNT','$SEV','$ENV')
+        ('$subject','$status','$category',SYSTIMESTAMP AT TIME ZONE 'EST','$attuid',SYSTIMESTAMP AT TIME ZONE 'EST','$owner','1');
+        WHENEVER SQLERROR EXIT SQL.SQLCODE;
+        EXIT;
+EOF
